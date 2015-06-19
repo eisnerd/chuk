@@ -40,7 +40,15 @@ int main() {
     WiiChuck nun(p9, p10, pc);
 #endif
 
-    radio.initialize(FREQUENCY, NODE_ID, NETWORKID);
+    nunchuk n;
+    bool sender = nun.Read(&n.X, &n.Y, &n.aX, &n.aY, &n.aZ, &n.C, &n.Z);
+    if (sender) {
+        pc.printf("chuck attached\r\n");
+        radio.initialize(FREQUENCY, NODE_ID, NETWORKID);
+    } else {
+        pc.printf("chuck unavailable\r\n");
+        radio.initialize(FREQUENCY, GATEWAY_ID, NETWORKID);
+    }    
     radio.encrypt("0123456789054321");
     //radio.promiscuous(false);
     radio.setHighPower(true);
@@ -49,10 +57,17 @@ int main() {
     //radio.readAllRegs();
     pc.printf("temp %d\r\n", radio.readTemperature(-1));
 
-    bool central = true;
-    nunchuk n;
+    bool read, central = true;
     while(1) {
-        bool read = nun.Read(&n.X, &n.Y, &n.aX, &n.aY, &n.aZ, &n.C, &n.Z);
+        if (sender)
+            read = nun.Read(&n.X, &n.Y, &n.aX, &n.aY, &n.aZ, &n.C, &n.Z);
+        else {
+            radio.receive();
+            printf("len %d\r\n", radio.DATALEN);
+            read = (radio.DATALEN == sizeof(struct nunchuk));
+            if (read)
+                memcpy((void*)&n, (const void*)radio.DATA, radio.DATALEN);
+        }
         if(read)
         {
             float x = n.X - 128, y = n.Y - 128;
@@ -73,7 +88,8 @@ int main() {
 
             //radio.send(GATEWAY_ID, (const void*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 50, false);
 #endif
-            radio.send(GATEWAY_ID, (const void*)&n, sizeof(struct nunchuk), false);
+            if (sender)
+                radio.send(GATEWAY_ID, (const void*)&n, sizeof(struct nunchuk), false);
 
 #ifdef TARGET_KL25Z
             if (R < 20) {
@@ -106,11 +122,12 @@ int main() {
             }
 #endif
         }
-        else
+        else if (sender)
         {
             pc.printf("Error\r\n");
             return 0;
         }
-        wait(0.01);
+        if (sender)
+            wait(0.01);
     }
 }
