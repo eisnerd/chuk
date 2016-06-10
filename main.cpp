@@ -61,7 +61,6 @@ void XF() {
     pulse(1250, 1);
 }
 void FF() {
-    pc.printf("FF\r\n");
     pulse(208, 625);
     pulse(208, 208);
     pulse(208, 208);
@@ -125,7 +124,7 @@ void ir_thread(void const *args) {
     while(1) {
         //if (!central)
             for(int x = 0; x < 5; x++) {
-                pc.printf("direction %d\r\n", direction);//directions[direction]);
+                pc.printf(central? "stop\r\n" : "direction %s\r\n", directions[direction]);
                 if (central)
                     BB();
                 else
@@ -139,32 +138,33 @@ void ir_thread(void const *args) {
                     case 6: XF(); break;
                     case 7: RF(); break;
                 }
-                Thread::wait(20);
+                Thread::wait(10);
             }
             Thread::wait(50);
     }
 }
 
 int main() {
-    gnd = 0;
-    ir.period(1.0/38000.0);
 #ifndef USBSerial
     pc.baud(115200);
 #endif
 
 #ifdef TARGET_KL25Z
-    //PwmOut r(LED_RED);
-    float r = 1.0f;
-    //PwmOut g(LED_GREEN);
-    float g = 1.0f;
+    PwmOut r(LED_RED);
+    //float r = 1.0f;
+    PwmOut g(LED_GREEN);
+    //float g = 1.0f;
+    PwmOut b(LED_BLUE);
     //while(1){FF();wait(0.01);}
-    //PwmOut b(LED_BLUE);
-    float b = 1.0f;
+    //float b = 1.0f;
     WiiChuck nun(PTE0, PTE1, pc);
     RFM69 radio(PTD2, PTD3, PTC5, PTD0, PTA13);
 #else
     WiiChuck nun(p9, p10, pc);
 #endif
+
+    gnd = 0;
+    ir.period_us(1000/38);
 
     nunchuk n1, n2;
     nunchuk *n = &n1, *next = &n2;
@@ -185,16 +185,15 @@ int main() {
     //radio.readAllRegs();
     pc.printf("temp %d\r\n", radio.readTemperature(-1));
 
-    bool read;
+    bool read = false;
     while(1) {
         if (sender)
             read = nun.Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
-        else {
-            radio.receive();
-            printf("rssi %d\r\n", radio.RSSI);
+        else if (radio.receiveDone()) {
+            //printf("rssi %d\r\n", radio.RSSI);
             read = (radio.DATALEN == sizeof(struct nunchuk));
             if (read) {
-                memcpy((void*)&next, (const void*)radio.DATA, radio.DATALEN);
+                memcpy((void*)next, (const void*)radio.DATA, radio.DATALEN);
                 nunchuk *last = n;
                 n = next;
                 next = last;
@@ -216,14 +215,15 @@ int main() {
             if (p >  3) c = 7;
             direction = c;
 
-#ifdef DEBUG
-            pc.printf("x%3d y%3d c%1d z%1d --", n.X, n.Y, n.C, n.Z);
-            pc.printf("x%d y%d z%d -- %.3f %s                   \r\n", n.aX, n.aY, n.aZ, R, directions[c]);
+#if DEBUG
+            pc.printf("%d: ", sizeof(struct nunchuk));
+            pc.printf("x%3d y%3d c%1d z%1d --", n->X, n->Y, n->C, n->Z);
+            pc.printf("x%d y%d z%d -- %.3f %s                   \r\n", n->aX, n->aY, n->aZ, R, direction);//s[c]);
 
             //radio.send(GATEWAY_ID, (const void*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 50, false);
 #endif
             if (sender)
-                radio.send(GATEWAY_ID, (const void*)&n, sizeof(struct nunchuk), false);
+                radio.send(GATEWAY_ID, (const void*)n, sizeof(struct nunchuk), false);
 
 #ifdef TARGET_KL25Z
             if (R < 20) {
@@ -236,7 +236,7 @@ int main() {
                 b = 1.0f;
             } else {
                 if (central) {
-                    pc.printf("go\r\n");
+                    pc.printf("go %s\r\n", directions[direction]);
                     central = false;
                 }
                 R = R/20000;
@@ -250,6 +250,7 @@ int main() {
                     {   1,   0,   1 },
                     { 0.5,   0,   1 },
                 };
+                c = (c + 4) % 8;
                 r = 1.0f - pal[c][0] * R;
                 g = 1.0f - pal[c][1] * R;
                 b = 1.0f - pal[c][2] * R;
