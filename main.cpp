@@ -5,6 +5,7 @@
 #endif
 
 #include "WiiChuk_compat.hpp"
+#include "lib_crc.h"
 
 //#include "USBSerial.h"
 
@@ -118,25 +119,28 @@ void BB() {
 }
 
 bool central = true;
+int stops_sent = 0;
 int direction = -1;
 Thread *thread;
 void ir_thread(void const *args) {
     while(1) {
         //if (!central)
             for(int x = 0; x < 5; x++) {
-                pc.printf(central? "stop\r\n" : "direction %s\r\n", directions[direction]);
-                if (central)
+                //pc.printf(central? "stop\r\n" : "direction %s\r\n", directions[direction]);
+                if (central && stops_sent++ < 50)
                     BB();
-                else
-                switch(direction) {
-                    case 0: XR(); break;
-                    case 1: RR(); break;
-                    case 2: RX(); break;
-                    case 3: FR(); break;
-                    case 4: FX(); break;
-                    case 5: FF(); break;
-                    case 6: XF(); break;
-                    case 7: RF(); break;
+                else {
+                    stops_sent = 0;
+                    switch(direction) {
+                        case 0: XR(); break;
+                        case 1: RR(); break;
+                        case 2: RX(); break;
+                        case 3: FR(); break;
+                        case 4: FX(); break;
+                        case 5: FF(); break;
+                        case 6: XF(); break;
+                        case 7: RF(); break;
+                    }
                 }
                 Thread::wait(10);
             }
@@ -144,7 +148,48 @@ void ir_thread(void const *args) {
     }
 }
 
-int main() {
+PwmOut speaker(PTA12);
+DigitalOut speaker_gnd(PTC4);
+//float speaker = 0;
+//float speaker_gnd = 0;
+
+//global variables used by interrupt routine
+volatile int i=0;
+float wave[128];
+ 
+// Interrupt routine
+// used to output next analog sample whenever a timer interrupt occurs
+void Sample_timer_interrupt(void)
+{
+    // send next analog sample out to D to A
+    speaker = wave[i];
+    // increment pointer and wrap around back to 0 at 128
+    i = (i+1) & 0x07F;
+}
+
+int Siren_pitch = 1;
+void Siren_pitch_flip() {
+    speaker.period(Siren_pitch ? 0.4/554.365 : 0.4/523.251);
+    Siren_pitch ^= 1;
+}
+
+Ticker siren_pitch;
+bool Siren_last = 0;
+void Siren_state(bool on) {
+    if (Siren_last != on) {
+        pc.printf("siren %d\r\n", on);
+        siren_pitch.detach();
+        Siren_pitch = 1;
+        Siren_pitch_flip();
+        siren_pitch.attach(&Siren_pitch_flip, 0.8);
+        speaker = on ? 0.3 : 0;
+    }
+    Siren_last = on;
+}
+
+int main()
+{
+
 #ifndef USBSerial
     pc.baud(115200);
 #endif
@@ -165,6 +210,40 @@ int main() {
 
     gnd = 0;
     ir.period_us(1000/38);
+
+    speaker_gnd = 0;
+    speaker = 0;
+    //speaker.period(1.0/200000.0);
+
+    /*
+    speaker = 0.2;
+    while(1) {
+    speaker.period(.8/554.365);
+    wait(.8);
+    speaker.period(.8/523.251);
+    wait(.8);
+    }
+    //speaker = 0.2;
+    // set up a timer to be used for sample rate interrupts
+    Ticker Sample_Period;
+    // precompute 128 sample points on one sine wave cycle 
+    // used for continuous sine wave output later
+    for(int k=0; k<128; k++) {
+        wave[k]=((1.0 + sin((float(k)/128.0*6.28318530717959)))/2.0);
+        // scale the sine wave from 0.0 to 1.0 - as needed for AnalogOut arg 
+    }
+    // turn on timer interrupts to start sine wave output
+    // sample rate is 500Hz with 128 samples per cycle on sine wave
+    while(1) {
+        Sample_Period.detach();
+        Sample_Period.attach(&Sample_timer_interrupt, 1.0/(554.365*128));
+        wait(.8);
+        Sample_Period.detach();
+        Sample_Period.attach(&Sample_timer_interrupt, 1.0/(523.251*128));
+        wait(.8);
+    }
+    // everything else needed is already being done by the interrupt routine
+    */
 
     nunchuk n1, n2;
     nunchuk *n = &n1, *next = &n2;
@@ -187,21 +266,31 @@ int main() {
 
     bool read = false;
     while(1) {
-        if (sender)
+        if (sender) {
             read = nun.Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
+            n->sum = 0;
+            n->sum = calculate_crc8((char*)n, sizeof(struct nunchuk));
+        }
         else if (radio.receiveDone()) {
-            //printf("rssi %d\r\n", radio.RSSI);
+            //pc.printf("rssi %d\r\n", radio.RSSI);
             read = (radio.DATALEN == sizeof(struct nunchuk));
             if (read) {
                 memcpy((void*)next, (const void*)radio.DATA, radio.DATALEN);
-                nunchuk *last = n;
-                n = next;
-                next = last;
-            } else
-                printf("len %d\r\n", radio.DATALEN);
+                uint8_t sum = next->sum;
+                next->sum = 0;
+                read = sum == calculate_crc8((char*)next, sizeof(struct nunchuk));
+                if (read) {
+                    nunchuk *last = n;
+                    n = next;
+                    next = last;
+                }
+            }
+            if (!read)
+                pc.printf("len %d\r\n", radio.DATALEN);
         }
         if(read)
         {
+            Siren_state(n->C);
             float x = n->X - 128, y = n->Y - 128;
             float R = x*x + y*y, p = atan2(y, x) * 4 / M_PI - 0.5;
             int c = 0;
