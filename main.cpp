@@ -1,5 +1,6 @@
 #include "mbed.h"
 #include "rtos.h"
+#include "FastPWM.h"
 #ifndef M_PI
 #define M_PI           3.14159265358979323846
 #endif
@@ -151,14 +152,14 @@ void ir_thread(void const *args) {
     }
 }
 
-PwmOut speaker(PTA12);
+FastPWM speaker(PTA12);
 DigitalOut speaker_gnd(PTC4);
 //float speaker = 0;
 //float speaker_gnd = 0;
 
 //global variables used by interrupt routine
-volatile int i=0;
-float wave[128];
+volatile int i=512;
+float wave[512];
  
 // Interrupt routine
 // used to output next analog sample whenever a timer interrupt occurs
@@ -172,20 +173,29 @@ void Sample_timer_interrupt(void)
 
 int Siren_pitch = 1;
 void Siren_pitch_flip() {
-    speaker.period(Siren_pitch ? 0.4/554.365 : 0.4/523.251);
-    Siren_pitch ^= 1;
+    speaker.period(wave[--i]);
+    if (i == 0)
+        i = 128;
 }
 
 Ticker siren_pitch;
+Timeout siren_pitch_switch;
 bool Siren_last = 0;
+void Siren_faster() {
+    siren_pitch.detach();
+    siren_pitch.attach(&Siren_pitch_flip, 0.6/128);
+}
 void Siren_state(bool on) {
     if (Siren_last != on) {
         pc.printf("siren %d\r\n", on);
         siren_pitch.detach();
         Siren_pitch = 1;
         Siren_pitch_flip();
-        siren_pitch.attach(&Siren_pitch_flip, 0.6);
-        speaker = on ? 0.3 : 0;
+        siren_pitch.detach();
+        if (on)
+            siren_pitch.attach(&Siren_pitch_flip, 0.6/128);
+        //siren_pitch_switch.attach(&Siren_faster, 2.0);
+        speaker = on ? 0.1 : 0;
     }
     Siren_last = on;
 }
@@ -206,6 +216,8 @@ void Headlight_interrupt() {
 void Headlight_state(bool a, bool b) {
     uint8_t mode = b ? 1 : a ? 2 : 0;
     if (Headlight_mode != mode) {
+        if (mode == 1)
+            i = 512;
         Headlight_mode = mode;
         Headlight_interrupt();
     }
@@ -240,6 +252,15 @@ int main()
     speaker = 0;
     //speaker.period(1.0/200000.0);
 
+    int m = i-128;
+    for(int k = 0; k < m; k++) {
+        // ramp up
+        wave[i-k-1] = 1.0/(1000+k*400.0/m);
+    }
+    for(int k = 0; k < 128; k++) {
+        // LFO
+        wave[127-k] = 1.0/(1400+200*sin(k/128.0*6.28318530717959));
+    }
     /*
     speaker = 0.2;
     while(1) {
