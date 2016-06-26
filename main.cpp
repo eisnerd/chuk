@@ -181,14 +181,36 @@ void Siren_state(bool on) {
         siren_pitch.detach();
         Siren_pitch = 1;
         Siren_pitch_flip();
-        siren_pitch.attach(&Siren_pitch_flip, 0.8);
+        siren_pitch.attach(&Siren_pitch_flip, 0.6);
         speaker = on ? 0.3 : 0;
     }
     Siren_last = on;
 }
 
+DigitalOut Headlight_l(PTD7);
+DigitalOut Headlight_r(PTB8);
+
+#define Headlight_swap 3
+#define Headlight_flicker 15
+uint8_t Headlight_mode = 0;
+uint8_t Headlight_phase = 0;
+Ticker Headlight_pattern;
+void Headlight_interrupt() {
+    Headlight_phase = (Headlight_phase + 1) % Headlight_flicker;
+    Headlight_l = Headlight_mode == 1 || (Headlight_mode == 2) && ((Headlight_phase % 2) == 0) && (Headlight_phase * 2 > Headlight_flicker);
+    Headlight_r = Headlight_mode == 1 || (Headlight_mode == 2) && ((Headlight_phase % 2) == 0) && (Headlight_phase * 2 < Headlight_flicker);
+}
+void Headlight_state(bool a, bool b) {
+    uint8_t mode = b ? 1 : a ? 2 : 0;
+    if (Headlight_mode != mode) {
+        Headlight_mode = mode;
+        Headlight_interrupt();
+    }
+}
+
 int main()
 {
+    Headlight_pattern.attach_us(&Headlight_interrupt, (timestamp_t)(1000000/Headlight_swap/Headlight_flicker));
 
 #ifndef USBSerial
     pc.baud(115200);
@@ -291,6 +313,7 @@ int main()
         if(read)
         {
             Siren_state(n->C);
+            Headlight_state(n->C, n->Z);
             float x = n->X - 128, y = n->Y - 128;
             float R = x*x + y*y, p = atan2(y, x) * 4 / M_PI - 0.5;
             int c = 0;
