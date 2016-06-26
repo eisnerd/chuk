@@ -126,10 +126,12 @@ void ir_thread(void const *args) {
     while(1) {
         //if (!central)
             for(int x = 0; x < 5; x++) {
-                //pc.printf(central? "stop %s %d\r\n" : "direction %s %d\r\n", directions[direction], stops_sent);
+                pc.printf(central? "stop %s %d\r\n" : "direction %s %d\r\n", directions[direction], stops_sent);
                 if (central) {
-                    if (stops_sent++ < 50)
+                    if (stops_sent < 50) {
+                        stops_sent++;
                         BB();
+                    }
                 } else {
                     stops_sent = 0;
                     switch(direction) {
