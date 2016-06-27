@@ -120,6 +120,7 @@ void BB() {
 }
 
 bool central = true;
+Timer central_time;
 int stops_sent = 0;
 int direction = -1;
 Thread *thread;
@@ -159,7 +160,7 @@ DigitalOut speaker_gnd(PTC4);
 
 //global variables used by interrupt routine
 volatile int i=512;
-float wave[512];
+float *wave;//[512];
  
 // Interrupt routine
 // used to output next analog sample whenever a timer interrupt occurs
@@ -219,17 +220,19 @@ void Headlight_state(bool a, bool b) {
         if (mode == 1)
             i = 512;
         Headlight_mode = mode;
+        Headlight_pattern.detach();
         Headlight_interrupt();
+        if (mode > 0)
+            Headlight_pattern.attach_us(&Headlight_interrupt, (timestamp_t)(1000000/Headlight_swap/Headlight_flicker));
     }
 }
 
-int main()
-{
-    Headlight_pattern.attach_us(&Headlight_interrupt, (timestamp_t)(1000000/Headlight_swap/Headlight_flicker));
-
-#ifndef USBSerial
-    pc.baud(115200);
-#endif
+void sleep_loop(void const *argument) {
+    while (true) {
+        sleep();
+        Thread::wait(100);
+    }
+}
 
 #ifdef TARGET_KL25Z
     PwmOut r(LED_RED);
@@ -237,12 +240,42 @@ int main()
     PwmOut g(LED_GREEN);
     //float g = 1.0f;
     PwmOut b(LED_BLUE);
-    //while(1){FF();wait(0.01);}
     //float b = 1.0f;
     WiiChuck nun(PTE0, PTE1, pc);
     RFM69 radio(PTD2, PTD3, PTC5, PTD0, PTA13);
 #else
     WiiChuck nun(p9, p10, pc);
+#endif
+
+bool rx_to_snooze = true;
+bool rx_snoozing = false;
+bool rx_snoozed() {
+    if (rx_snoozing) {
+        pc.printf("still snoozing\r\n");
+        Thread::signal_wait(0x1);
+        pc.printf("signalled?\r\n");
+    }
+    return true;
+}
+
+void rx_snoozer(void const *mainThreadID) {
+    pc.printf("snooze rx\r\n");
+    
+    rx_snoozing = true;
+    radio.send(GATEWAY_ID, (const void*)"hello?", 6, false);
+    Thread::wait(5000);
+    rx_snoozing = false;
+    rx_to_snooze = true;
+    pc.printf("unsnooze rx\r\n");
+    osSignalSet((osThreadId)mainThreadID, 0x1);
+}
+
+int main()
+{
+
+    RtosTimer rx_snooze(&rx_snoozer, osTimerOnce, (void*)osThreadGetId());
+#ifndef USBSerial
+    pc.baud(115200);
 #endif
 
     gnd = 0;
@@ -252,15 +285,6 @@ int main()
     speaker = 0;
     //speaker.period(1.0/200000.0);
 
-    int m = i-128;
-    for(int k = 0; k < m; k++) {
-        // ramp up
-        wave[i-k-1] = 1.0/(1000+k*400.0/m);
-    }
-    for(int k = 0; k < 128; k++) {
-        // LFO
-        wave[127-k] = 1.0/(1400+200*sin(k/128.0*6.28318530717959));
-    }
     /*
     speaker = 0.2;
     while(1) {
@@ -301,6 +325,16 @@ int main()
         pc.printf("chuck unavailable\r\n");
         radio.initialize(FREQUENCY, GATEWAY_ID, NETWORKID);
         thread = new Thread(ir_thread);
+        wave = new float[i];
+        int m = i-128;
+        for(int k = 0; k < m; k++) {
+            // ramp up
+            wave[i-k-1] = 1.0/(1000+k*400.0/m);
+        }
+        for(int k = 0; k < 128; k++) {
+            // LFO
+            wave[127-k] = 1.0/(1400+200*sin(k/128.0*6.28318530717959));
+        }
    }    
     radio.encrypt("0123456789054321");
     //radio.promiscuous(false);
@@ -310,6 +344,7 @@ int main()
     //radio.readAllRegs();
     pc.printf("temp %d\r\n", radio.readTemperature(-1));
 
+    Thread t_sleep_loop(&sleep_loop);
     bool read = false;
     while(1) {
         if (sender) {
@@ -317,8 +352,10 @@ int main()
             n->sum = 0;
             n->sum = calculate_crc8((char*)n, sizeof(struct nunchuk));
         }
-        else if (radio.receiveDone()) {
-            //pc.printf("rssi %d\r\n", radio.RSSI);
+        else if (rx_snoozed() && radio.receiveDone()) {
+            rx_snooze.stop();
+            rx_to_snooze = true;
+            pc.printf("rssi %d\r\n", radio.RSSI);
             read = (radio.DATALEN == sizeof(struct nunchuk));
             if (read) {
                 memcpy((void*)next, (const void*)radio.DATA, radio.DATALEN);
@@ -333,6 +370,10 @@ int main()
             }
             if (!read)
                 pc.printf("len %d\r\n", radio.DATALEN);
+        } else if (rx_to_snooze) {
+            pc.printf("to snooze\r\n");
+            rx_snooze.start(1000);
+            rx_to_snooze = false;
         }
         if(read)
         {
@@ -358,13 +399,14 @@ int main()
 
             //radio.send(GATEWAY_ID, (const void*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 50, false);
 #endif
-            if (sender)
+            if (sender && central_time.read() < 10)
                 radio.send(GATEWAY_ID, (const void*)n, sizeof(struct nunchuk), false);
 
 #ifdef TARGET_KL25Z
             if (R < 20) {
                 if (!central) {
                     pc.printf("central\r\n");
+                    central_time.start();
                     central = true;
                 }
                 r = 1.0f;
@@ -374,6 +416,8 @@ int main()
                 if (central) {
                     pc.printf("go %s\r\n", directions[direction]);
                     central = false;
+                    central_time.stop();
+                    central_time.reset();
                 }
                 R = R/20000;
                 float pal[8][3] = {
