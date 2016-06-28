@@ -1,5 +1,6 @@
 #include "mbed.h"
 #include "rtos.h"
+#include "WakeUp.h"
 #include "FastPWM.h"
 #ifndef M_PI
 #define M_PI           3.14159265358979323846
@@ -128,7 +129,7 @@ void ir_thread(void const *args) {
     while(1) {
         //if (!central)
             for(int x = 0; x < 5; x++) {
-                pc.printf(central? "stop %s %d\r\n" : "direction %s %d\r\n", directions[direction], stops_sent);
+                //pc.printf(central? "stop %s %d\r\n" : "direction %s %d\r\n", directions[direction], stops_sent);
                 if (central) {
                     if (stops_sent < 50) {
                         stops_sent++;
@@ -247,6 +248,7 @@ void sleep_loop(void const *argument) {
     WiiChuck nun(p9, p10, pc);
 #endif
 
+Timer rx_last_contact;
 bool rx_to_snooze = true;
 bool rx_snoozing = false;
 bool rx_snoozed() {
@@ -259,11 +261,12 @@ bool rx_snoozed() {
 }
 
 void rx_snoozer(void const *mainThreadID) {
-    pc.printf("snooze rx\r\n");
+    pc.printf("snooze rx %f\r\n", rx_last_contact.read());
     
     rx_snoozing = true;
-    radio.send(GATEWAY_ID, (const void*)"hello?", 6, false);
-    Thread::wait(5000);
+    radio.sleep();
+    WakeUp::set(5);//rx_last_contact.read() < 10? 1 : 5);
+    deepsleep();
     rx_snoozing = false;
     rx_to_snooze = true;
     pc.printf("unsnooze rx\r\n");
@@ -272,12 +275,14 @@ void rx_snoozer(void const *mainThreadID) {
 
 int main()
 {
-
+    WakeUp::calibrate();
     RtosTimer rx_snooze(&rx_snoozer, osTimerOnce, (void*)osThreadGetId());
+
 #ifndef USBSerial
     pc.baud(115200);
 #endif
 
+    r = g = b = 1;
     gnd = 0;
     ir.period_us(1000/38);
 
@@ -335,6 +340,7 @@ int main()
             // LFO
             wave[127-k] = 1.0/(1400+200*sin(k/128.0*6.28318530717959));
         }
+        rx_last_contact.start();
    }    
     radio.encrypt("0123456789054321");
     //radio.promiscuous(false);
@@ -353,6 +359,7 @@ int main()
             n->sum = calculate_crc8((char*)n, sizeof(struct nunchuk));
         }
         else if (rx_snoozed() && radio.receiveDone()) {
+            rx_last_contact.reset();
             rx_snooze.stop();
             rx_to_snooze = true;
             pc.printf("rssi %d\r\n", radio.RSSI);
@@ -372,7 +379,7 @@ int main()
                 pc.printf("len %d\r\n", radio.DATALEN);
         } else if (rx_to_snooze) {
             pc.printf("to snooze\r\n");
-            rx_snooze.start(1000);
+            rx_snooze.start(200);
             rx_to_snooze = false;
         }
         if(read)
