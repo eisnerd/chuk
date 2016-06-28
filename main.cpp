@@ -290,7 +290,6 @@ void rx_snoozer(void const *mainThreadID) {
 
 int main()
 {
-    WakeUp::calibrate();
     RtosTimer rx_snooze(&rx_snoozer, osTimerOnce, (void*)osThreadGetId());
 
 #ifndef USBSerial
@@ -341,10 +340,14 @@ int main()
     if (sender) {
         pc.printf("chuck attached\r\n");
         radio.initialize(FREQUENCY, NODE_ID, NETWORKID);
+        central_time.start();
     } else {
         pc.printf("chuck unavailable\r\n");
         radio.initialize(FREQUENCY, GATEWAY_ID, NETWORKID);
+        // only relevant to the receiver
         thread = new Thread(ir_thread);
+        rx_last_contact.start();
+        // these break the nunchuk
         wave = new float[i];
         int m = i-128;
         for(int k = 0; k < m; k++) {
@@ -355,8 +358,8 @@ int main()
             // LFO
             wave[127-k] = 1.0/(1400+200*sin(k/128.0*6.28318530717959));
         }
-        rx_last_contact.start();
-   }    
+        WakeUp::calibrate();
+   }
     radio.encrypt("0123456789054321");
     //radio.promiscuous(false);
     radio.setHighPower(true);
@@ -427,18 +430,18 @@ int main()
             if (R < 20) {
                 if (!central) {
                     pc.printf("central\r\n");
-                    central_time.start();
                     central = true;
                 }
+                if (n->C || n->Z)
+                    central_time.reset();
                 r = 1.0f;
                 g = 1.0f;
                 b = 1.0f;
             } else {
+                central_time.reset();
                 if (central) {
                     pc.printf("go %s\r\n", directions[direction]);
                     central = false;
-                    central_time.stop();
-                    central_time.reset();
                 }
                 R = R/20000;
                 float pal[8][3] = {
