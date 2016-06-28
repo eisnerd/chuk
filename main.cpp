@@ -372,6 +372,21 @@ int main()
     bool read = false;
     while(1) {
         if (sender) {
+            if (central_time.read() > 20) {
+                #if DEBUG
+                pc.printf("snooze tx %f\r\n", central_time.read());
+                g = 0; Thread::wait(10); g = 1; Thread::wait(10);
+                #endif
+                Thread::wait(10);
+                WakeUp::set(1);
+                deepsleep();
+                nun.Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
+                Thread::wait(10);
+                #if DEBUG
+                r = 0; Thread::wait(10); r = 1; Thread::wait(10);
+                pc.printf("unsnooze tx\r\n");
+                #endif
+            }
             read = nun.Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
             n->sum = 0;
             n->sum = calculate_crc8((char*)n, sizeof(struct nunchuk));
@@ -423,8 +438,11 @@ int main()
 
             //radio.send(GATEWAY_ID, (const void*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 50, false);
 #endif
-            if (sender && central_time.read() < 10)
-                radio.send(GATEWAY_ID, (const void*)n, sizeof(struct nunchuk), false);
+            if (sender)
+                if (central_time.read() < 10)
+                    radio.send(GATEWAY_ID, (const void*)n, sizeof(struct nunchuk), false);
+                else
+                    radio.sleep();
 
 #ifdef TARGET_KL25Z
             if (R < 20) {
