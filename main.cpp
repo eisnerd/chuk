@@ -23,12 +23,25 @@
 
 const char *directions[8] = { "XR", "RR", "RX", "FR", "FX", "FF", "XF", "RF" };
 
+#define DEBUG 0
+#ifdef DEBUG
 #ifdef USBSerial
     USBSerial pc;
 #else
     Serial pc(USBTX, USBRX);
 #endif
+#else
+    class Null : public Stream {
+        public:
+        Null(): Stream("null") {}
+        void baud(int) {}
 
+        protected:
+        virtual int _getc() { return 0; }
+        virtual int _putc(int c) { return 0; }
+    };
+    Null pc;
+#endif
 #if TARGET_KL25Z
 DigitalOut gnd(PTC0);
 PwmOut ir(PTD4);
@@ -129,7 +142,9 @@ void ir_thread(void const *args) {
     while(1) {
         //if (!central)
             for(int x = 0; x < 5; x++) {
-                //pc.printf(central? "stop %s %d\r\n" : "direction %s %d\r\n", directions[direction], stops_sent);
+                #if DEBUG
+                pc.printf(central? "stop %s %d\r\n" : "direction %s %d\r\n", directions[direction], stops_sent);
+                #endif
                 if (central) {
                     if (stops_sent < 50) {
                         stops_sent++;
@@ -378,7 +393,6 @@ int main()
             if (!read)
                 pc.printf("len %d\r\n", radio.DATALEN);
         } else if (rx_to_snooze) {
-            pc.printf("to snooze\r\n");
             rx_snooze.start(200);
             rx_to_snooze = false;
         }
@@ -399,7 +413,7 @@ int main()
             if (p >  3) c = 7;
             direction = c;
 
-#if DEBUG
+#if DEBUG > 1
             pc.printf("%d: ", sizeof(struct nunchuk));
             pc.printf("x%3d y%3d c%1d z%1d --", n->X, n->Y, n->C, n->Z);
             pc.printf("x%d y%d z%d -- %.3f %s                   \r\n", n->aX, n->aY, n->aZ, R, direction);//s[c]);
