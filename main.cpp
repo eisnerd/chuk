@@ -258,21 +258,23 @@ void sleep_loop(void const *argument) {
     PwmOut b(LED_BLUE);
     //float b = 1.0f;
     DigitalOut nun_vdd(PTE31);
-    WiiChuck *nun = 0;
+    WiiChuck *nun;
+    uint8_t nun_settled = 0;
     bool nun_init(nunchuk *next) {
-        for (int i = 0; i < 10; i++) {
-            nun_vdd = 1;
-            Thread::wait(100);
+        for (int i = 0; i < 3; i++) {
             if (nun)
                 delete nun;
+            nun_vdd = 1;
+            Thread::wait(50);
             nun = new WiiChuck(PTE0, PTE1, pc);
             if (nun->Read(&next->X, &next->Y, &next->aX, &next->aY, &next->aZ, &next->C, &next->Z)) {
+                nun_settled = 0;
                 Thread::wait(10);
                 return true;
             }
             pc.printf("nun_init error\r\n");
             nun_vdd = 0;
-            Thread::wait(100);
+            Thread::wait(50);
         }
         return false;
     }
@@ -305,6 +307,7 @@ void rx_snoozer(void const *mainThreadID) {
     radio.sleep();
     WakeUp::set(rx_last_contact.read() < 60? 1 : 5);
     deepsleep();
+    stops_sent = 0;
     rx_snoozing = false;
     rx_to_snooze = true;
     pc.printf("unsnooze rx\r\n");
@@ -395,7 +398,7 @@ int main()
     bool read = false;
     while(1) {
         if (sender) {
-            if (central_time.read() > 20) {
+            if (/*nun_settled++ > 2 && */central_time.read() > 20) {
                 #if DEBUG
                 pc.printf("snooze tx %f\r\n", central_time.read());
                 g = 0; Thread::wait(10); g = 1; Thread::wait(10);
@@ -421,7 +424,7 @@ int main()
             rx_last_contact.reset();
             rx_snooze.stop();
             rx_to_snooze = true;
-            pc.printf("rssi %d\r\n", radio.RSSI);
+            //pc.printf("rssi %d\r\n", radio.RSSI);
             read = (radio.DATALEN == sizeof(struct nunchuk));
             if (read) {
                 memcpy((void*)next, (const void*)radio.DATA, radio.DATALEN);
@@ -480,11 +483,16 @@ int main()
 #if DEBUG > 1
                 pc.printf("twitch %f\r\n", twitch);
 #endif
-                if (n->C || n->Z || twitch > 100)
-                    central_time.reset();
                 r = 1.0f;
                 g = 1.0f;
                 b = 1.0f;
+                if (n->C || n->Z || /*nun_settled > 2 &&*/ twitch > 500) {
+                    Thread::wait(10);
+#if DEBUG
+                    pc.printf("c %d z %d twitch %f\r\n", n->C, n->Z, twitch);
+#endif
+                    central_time.reset();
+                }
             } else {
                 central_time.reset();
                 if (central) {
