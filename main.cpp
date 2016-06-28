@@ -401,6 +401,9 @@ int main()
                 pc.printf("unsnooze tx\r\n");
                 #endif
             }
+            nunchuk *last = n;
+            n = next;
+            next = last;
             read = nun->Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
             n->sum = 0;
             n->sum = calculate_crc8((char*)n, sizeof(struct nunchuk));
@@ -464,7 +467,11 @@ int main()
                     pc.printf("central\r\n");
                     central = true;
                 }
-                if (n->C || n->Z)
+                double twitch = pow(n->aX - next->aX, 2.0) + pow(n->aY - next->aY, 2.0) + pow(n->aZ - next->aZ, 2.0);
+#if DEBUG > 1
+                pc.printf("twitch %f\r\n", twitch);
+#endif
+                if (n->C || n->Z || twitch > 100)
                     central_time.reset();
                 r = 1.0f;
                 g = 1.0f;
