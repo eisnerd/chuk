@@ -257,10 +257,21 @@ void sleep_loop(void const *argument) {
     //float g = 1.0f;
     PwmOut b(LED_BLUE);
     //float b = 1.0f;
-    WiiChuck nun(PTE0, PTE1, pc);
+    DigitalOut nun_vdd(PTE31);
+    WiiChuck *nun;
+    void nun_init() {
+        nun_vdd = 1;
+        Thread::wait(100);
+        nun = new WiiChuck(PTE0, PTE1, pc);
+    }
+    void nun_sleep() {
+        nun_vdd = 0;
+    }
     RFM69 radio(PTD2, PTD3, PTC5, PTD0, PTA13);
 #else
-    WiiChuck nun(p9, p10, pc);
+    WiiChuck *nun = new WiiChuck(p9, p10, pc);
+    void nun_init() {}
+    void nun_sleep() {}
 #endif
 
 Timer rx_last_contact;
@@ -336,7 +347,8 @@ int main()
 
     nunchuk n1, n2;
     nunchuk *n = &n1, *next = &n2;
-    bool sender = nun.Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
+    nun_init();
+    bool sender = nun->Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
     if (sender) {
         pc.printf("chuck attached\r\n");
         radio.initialize(FREQUENCY, NODE_ID, NETWORKID);
@@ -377,17 +389,19 @@ int main()
                 pc.printf("snooze tx %f\r\n", central_time.read());
                 g = 0; Thread::wait(10); g = 1; Thread::wait(10);
                 #endif
+                nun_sleep();
                 Thread::wait(10);
                 WakeUp::set(1);
                 deepsleep();
-                nun.Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
+                nun_init();
+                nun->Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
                 Thread::wait(10);
                 #if DEBUG
                 r = 0; Thread::wait(10); r = 1; Thread::wait(10);
                 pc.printf("unsnooze tx\r\n");
                 #endif
             }
-            read = nun.Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
+            read = nun->Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
             n->sum = 0;
             n->sum = calculate_crc8((char*)n, sizeof(struct nunchuk));
         }
