@@ -258,11 +258,23 @@ void sleep_loop(void const *argument) {
     PwmOut b(LED_BLUE);
     //float b = 1.0f;
     DigitalOut nun_vdd(PTE31);
-    WiiChuck *nun;
-    void nun_init() {
-        nun_vdd = 1;
-        Thread::wait(100);
-        nun = new WiiChuck(PTE0, PTE1, pc);
+    WiiChuck *nun = 0;
+    bool nun_init(nunchuk *next) {
+        for (int i = 0; i < 10; i++) {
+            nun_vdd = 1;
+            Thread::wait(100);
+            if (nun)
+                delete nun;
+            nun = new WiiChuck(PTE0, PTE1, pc);
+            if (nun->Read(&next->X, &next->Y, &next->aX, &next->aY, &next->aZ, &next->C, &next->Z)) {
+                Thread::wait(10);
+                return true;
+            }
+            pc.printf("nun_init error\r\n");
+            nun_vdd = 0;
+            Thread::wait(100);
+        }
+        return false;
     }
     void nun_sleep() {
         nun_vdd = 0;
@@ -270,7 +282,7 @@ void sleep_loop(void const *argument) {
     RFM69 radio(PTD2, PTD3, PTC5, PTD0, PTA13);
 #else
     WiiChuck *nun = new WiiChuck(p9, p10, pc);
-    void nun_init() {}
+    bool nun_init(nunchuk *) {}
     void nun_sleep() {}
 #endif
 
@@ -347,8 +359,7 @@ int main()
 
     nunchuk n1, n2;
     nunchuk *n = &n1, *next = &n2;
-    nun_init();
-    bool sender = nun->Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
+    bool sender = nun_init(n);
     if (sender) {
         pc.printf("chuck attached\r\n");
         radio.initialize(FREQUENCY, NODE_ID, NETWORKID);
@@ -393,9 +404,7 @@ int main()
                 Thread::wait(10);
                 WakeUp::set(1);
                 deepsleep();
-                nun_init();
-                nun->Read(&next->X, &next->Y, &next->aX, &next->aY, &next->aZ, &next->C, &next->Z);
-                Thread::wait(10);
+                nun_init(next);
                 #if DEBUG
                 r = 0; Thread::wait(10); r = 1; Thread::wait(10);
                 pc.printf("unsnooze tx\r\n");
@@ -503,7 +512,6 @@ int main()
         else if (sender)
         {
             pc.printf("Error\r\n");
-            return 0;
         }
         if (sender)
             wait(0.01);
