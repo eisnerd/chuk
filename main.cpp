@@ -394,7 +394,7 @@ int main()
                 WakeUp::set(1);
                 deepsleep();
                 nun_init();
-                nun->Read(&n->X, &n->Y, &n->aX, &n->aY, &n->aZ, &n->C, &n->Z);
+                nun->Read(&next->X, &next->Y, &next->aX, &next->aY, &next->aZ, &next->C, &next->Z);
                 Thread::wait(10);
                 #if DEBUG
                 r = 0; Thread::wait(10); r = 1; Thread::wait(10);
