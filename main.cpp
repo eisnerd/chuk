@@ -291,7 +291,7 @@ void rx_snoozer(void const *mainThreadID) {
     
     rx_snoozing = true;
     radio.sleep();
-    WakeUp::set(5);//rx_last_contact.read() < 10? 1 : 5);
+    WakeUp::set(rx_last_contact.read() < 60? 1 : 5);
     deepsleep();
     rx_snoozing = false;
     rx_to_snooze = true;
