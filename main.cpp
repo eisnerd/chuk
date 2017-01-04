@@ -248,29 +248,42 @@ void Headlight_state(bool a, bool b) {
     }
 }
 
+uint8_t indicators = 0;
+uint8_t indicator_phase = 0;
+Ticker indicator_pattern;
+void indicator_interrupt() {
+    indicator_phase++;
+}
+void indicator_init() {
+    indicator_pattern.attach(&indicator_interrupt, 0.5);
+}
+
 TLC59108 *light_bar;
 #define light_bar_phases 10
-uint8_t light_bar_pattern[light_bar_phases][4] = {
-    { 0xFF, 0xFF, 0x00, 0x00 },
-    { 0x00, 0xFF, 0x00, 0x00 },
-    { 0xFF, 0xFF, 0x00, 0x00 },
-    { 0x00, 0xFF, 0x00, 0x00 },
-    { 0xFF, 0x00, 0xFF, 0x00 },
-    { 0x00, 0x00, 0xFF, 0xFF },
-    { 0x00, 0x00, 0xFF, 0x00 },
-    { 0x00, 0x00, 0xFF, 0xFF },
-    { 0x00, 0x00, 0xFF, 0x00 },
-    { 0x00, 0xFF, 0x00, 0xFF } };
+uint8_t light_bar_pattern[light_bar_phases+1][8] = {
+    { 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0xFF, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } };
 uint8_t light_bar_phase = 0;
 
 void light_bar_thread(const void*) {
     while(true) {
         Thread::wait(20);
-        light_bar_phase = (light_bar_phase + 1) % light_bar_phases;
-        if (Headlight_mode == 2)
-            pc.printf("light bar %d\r\n", light_bar->setBrightness(light_bar_pattern[light_bar_phase]));
-        else
-            light_bar->setBrightness((uint8_t)0);
+        light_bar_phase = Siren_last ? (light_bar_phase + 1) % light_bar_phases : light_bar_phases;
+        uint8_t* pattern = light_bar_pattern[light_bar_phase];
+        pattern[4] = Headlight_l ? 0xFF : 0x00;
+        pattern[5] = Headlight_r ? 0xFF : 0x00;
+        pattern[6] = (indicator_phase % 2) == 0 && indicators == 1 ? 0xFF : 0x00;
+        pattern[7] = (indicator_phase % 2) == 0 && indicators == 2 ? 0xFF : 0x00;
+        pc.printf("light bar %d\r\n", light_bar->setBrightness(pattern));
     }
 }
 Thread *t_light_bar_thread;
@@ -427,6 +440,7 @@ int main()
         }
         WakeUp::calibrate();
         light_bar_init();
+        indicator_init();
    }
     radio.encrypt("0123456789054321");
     //radio.promiscuous(false);
@@ -526,6 +540,25 @@ int main()
             char wake[100];
 #endif
 #ifdef TARGET_KL25Z
+            indicators = 0;
+            if (R > 2) {
+                switch(direction) {
+                    // left
+                    case 0: //XR(); break;
+                    case 6: //XF(); break;
+                    case 7: //RF(); break;
+                    indicators = 2; break;
+                    // right
+                    case 2: //RX(); break;
+                    case 3: //FR(); break;
+                    case 4: //FX(); break;
+                    indicators = 1; break;
+                    // neither
+                    case 1: //RR(); break;
+                    case 5: //FF(); break;
+                    break;
+                }
+            }
             if (R < 20) {
                 if (!central) {
                     pc.printf("central\r\n");
