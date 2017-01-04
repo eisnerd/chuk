@@ -9,6 +9,8 @@
 #include "WiiChuk_compat.hpp"
 #include "lib_crc.h"
 
+#include "tlc59108.h"
+
 //#include "USBSerial.h"
 
 #include "RFM69.h"
@@ -43,8 +45,8 @@ const char *directions[8] = { "XR", "RR", "RX", "FR", "FX", "FF", "XF", "RF" };
     Null pc;
 #endif
 #if TARGET_KL25Z
-DigitalOut gnd(PTC0);
-PwmOut ir(PTD4);
+DigitalOut gnd(PTC6);
+PwmOut ir(PTA5);
 #endif
 #define pulse(x, y) ir = 0.5; wait_us(x); ir = 0.0; wait_us(y); 
 
@@ -133,19 +135,21 @@ void BB() {
     pulse(1042, 1);
 }
 
+int mag;
 bool central = true;
 Timer central_time;
+bool central_time_trip = 0;
 int stops_sent = 0;
 int direction = -1;
 Thread *thread;
 void ir_thread(void const *args) {
     while(1) {
         //if (!central)
-            for(int x = 0; x < 5; x++) {
+            for(int x = 0; x < 40; x++) {
                 #if DEBUG
                 pc.printf(central? "stop %s %d\r\n" : "direction %s %d\r\n", directions[direction], stops_sent);
                 #endif
-                if (central) {
+                if (central || (x % 4) > mag) {
                     if (stops_sent < 50) {
                         stops_sent++;
                         BB();
@@ -163,9 +167,9 @@ void ir_thread(void const *args) {
                         case 7: RF(); break;
                     }
                 }
-                Thread::wait(10);
+                Thread::wait(5);
             }
-            Thread::wait(50);
+            Thread::wait(30);
     }
 }
 
@@ -212,7 +216,7 @@ void Siren_state(bool on) {
         if (on)
             siren_pitch.attach(&Siren_pitch_flip, 0.6/128);
         //siren_pitch_switch.attach(&Siren_faster, 2.0);
-        speaker = on ? 0.1 : 0;
+        speaker = on ? 0.5 : 0;
     }
     Siren_last = on;
 }
@@ -230,6 +234,7 @@ void Headlight_interrupt() {
     Headlight_l = Headlight_mode == 1 || (Headlight_mode == 2) && ((Headlight_phase % 2) == 0) && (Headlight_phase * 2 > Headlight_flicker);
     Headlight_r = Headlight_mode == 1 || (Headlight_mode == 2) && ((Headlight_phase % 2) == 0) && (Headlight_phase * 2 < Headlight_flicker);
 }
+
 void Headlight_state(bool a, bool b) {
     uint8_t mode = b ? 1 : a ? 2 : 0;
     if (Headlight_mode != mode) {
@@ -241,6 +246,40 @@ void Headlight_state(bool a, bool b) {
         if (mode > 0)
             Headlight_pattern.attach_us(&Headlight_interrupt, (timestamp_t)(1000000/Headlight_swap/Headlight_flicker));
     }
+}
+
+TLC59108 *light_bar;
+#define light_bar_phases 10
+uint8_t light_bar_pattern[light_bar_phases][4] = {
+    { 0xFF, 0xFF, 0x00, 0x00 },
+    { 0x00, 0xFF, 0x00, 0x00 },
+    { 0xFF, 0xFF, 0x00, 0x00 },
+    { 0x00, 0xFF, 0x00, 0x00 },
+    { 0xFF, 0x00, 0xFF, 0x00 },
+    { 0x00, 0x00, 0xFF, 0xFF },
+    { 0x00, 0x00, 0xFF, 0x00 },
+    { 0x00, 0x00, 0xFF, 0xFF },
+    { 0x00, 0x00, 0xFF, 0x00 },
+    { 0x00, 0xFF, 0x00, 0xFF } };
+uint8_t light_bar_phase = 0;
+
+void light_bar_thread(const void*) {
+    while(true) {
+        Thread::wait(20);
+        light_bar_phase = (light_bar_phase + 1) % light_bar_phases;
+        if (Headlight_mode == 2)
+            pc.printf("light bar %d\r\n", light_bar->setBrightness(light_bar_pattern[light_bar_phase]));
+        else
+            light_bar->setBrightness((uint8_t)0);
+    }
+}
+Thread *t_light_bar_thread;
+
+void light_bar_init() {
+    light_bar = new TLC59108(PTE0, PTE1);
+    pc.printf("light bar init %d\r\n", light_bar->setLedOutputMode(TLC59108::LED_MODE::PWM_INDGRP));
+    light_bar->setGroupBrightness(100);
+    t_light_bar_thread = new Thread(&light_bar_thread);
 }
 
 void sleep_loop(void const *argument) {
@@ -261,7 +300,8 @@ void sleep_loop(void const *argument) {
     WiiChuck *nun;
     uint8_t nun_settled = 0;
     bool nun_init(nunchuk *next) {
-        for (int i = 0; i < 3; i++) {
+        //return false;
+        for (int i = 0; i < 5; i++) {
             if (nun)
                 delete nun;
             nun_vdd = 1;
@@ -289,6 +329,7 @@ void sleep_loop(void const *argument) {
 #endif
 
 Timer rx_last_contact;
+bool rx_last_contact_trip = 0;
 bool rx_to_snooze = true;
 bool rx_snoozing = false;
 bool rx_snoozed() {
@@ -305,7 +346,7 @@ void rx_snoozer(void const *mainThreadID) {
     
     rx_snoozing = true;
     radio.sleep();
-    WakeUp::set(rx_last_contact.read() < 60? 1 : 5);
+    WakeUp::set((rx_last_contact_trip |= (rx_last_contact.read() < 60))? 2 : 10);
     deepsleep();
     stops_sent = 0;
     rx_snoozing = false;
@@ -385,6 +426,7 @@ int main()
             wave[127-k] = 1.0/(1400+200*sin(k/128.0*6.28318530717959));
         }
         WakeUp::calibrate();
+        light_bar_init();
    }
     radio.encrypt("0123456789054321");
     //radio.promiscuous(false);
@@ -394,18 +436,19 @@ int main()
     //radio.readAllRegs();
     pc.printf("temp %d\r\n", radio.readTemperature(-1));
 
-    Thread t_sleep_loop(&sleep_loop);
+    //Thread t_sleep_loop(&sleep_loop);
     bool read = false;
     while(1) {
         if (sender) {
-            if (/*nun_settled++ > 2 && */central_time.read() > 20) {
+            if (/*nun_settled++ > 2 && */central_time_trip |= (central_time.read() > 5)) {
                 #if DEBUG
                 pc.printf("snooze tx %f\r\n", central_time.read());
                 g = 0; Thread::wait(10); g = 1; Thread::wait(10);
                 #endif
                 nun_sleep();
+                radio.sleep();
                 Thread::wait(10);
-                WakeUp::set(1);
+                WakeUp::set(2);
                 deepsleep();
                 nun_init(next);
                 #if DEBUG
@@ -422,6 +465,7 @@ int main()
         }
         else if (rx_snoozed() && radio.receiveDone()) {
             rx_last_contact.reset();
+            rx_last_contact_trip = 0;
             rx_snooze.stop();
             rx_to_snooze = true;
             //pc.printf("rssi %d\r\n", radio.RSSI);
@@ -437,10 +481,12 @@ int main()
                     next = last;
                 }
             }
+            if (radio.DATALEN > 30)
+                pc.printf((const char*)radio.DATA);
             if (!read)
                 pc.printf("len %d\r\n", radio.DATALEN);
         } else if (rx_to_snooze) {
-            rx_snooze.start(200);
+            rx_snooze.start(100);
             rx_to_snooze = false;
         }
         if(read)
@@ -449,7 +495,10 @@ int main()
             Headlight_state(n->C, n->Z);
             float x = n->X - 128, y = n->Y - 128;
             float R = x*x + y*y, p = atan2(y, x) * 4 / M_PI - 0.5;
-            int c = 0;
+            mag = sqrt(R)/42; if (mag > 2) mag = 10;
+            //const char *directions[8] = { "XR", "RR", "RX", "FR", "FX", "FF", "XF", "RF" };
+
+            int c = 7;
             if (p > -4) c = 0;
             if (p > -3) c = 1;
             if (p > -2) c = 2;
@@ -460,19 +509,22 @@ int main()
             if (p >  3) c = 7;
             direction = c;
 
-#if DEBUG > 1
+//#if DEBUG > 1
             pc.printf("%d: ", sizeof(struct nunchuk));
-            pc.printf("x%3d y%3d c%1d z%1d --", n->X, n->Y, n->C, n->Z);
-            pc.printf("x%d y%d z%d -- %.3f %s                   \r\n", n->aX, n->aY, n->aZ, R, direction);//s[c]);
+            pc.printf("x%3d y%3d c%1d z%1d -- ", n->X, n->Y, n->C, n->Z);
+            pc.printf("x%d y%d z%d -- %8.2f %8.4f %s %d \r\n", n->aX, n->aY, n->aZ, R, p, directions[direction], mag);
 
             //radio.send(GATEWAY_ID, (const void*)"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 50, false);
-#endif
+//#endif
             if (sender)
-                if (central_time.read() < 10)
+                if (central_time.read() < 1)
                     radio.send(GATEWAY_ID, (const void*)n, sizeof(struct nunchuk), false);
                 else
                     radio.sleep();
 
+#if DEBUG
+            char wake[100];
+#endif
 #ifdef TARGET_KL25Z
             if (R < 20) {
                 if (!central) {
@@ -486,15 +538,25 @@ int main()
                 r = 1.0f;
                 g = 1.0f;
                 b = 1.0f;
-                if (n->C || n->Z || /*nun_settled > 2 &&*/ twitch > 500) {
+                if (n->C || n->Z || /*nun_settled > 2 &&*/ twitch > 1000) {
                     Thread::wait(10);
 #if DEBUG
                     pc.printf("c %d z %d twitch %f\r\n", n->C, n->Z, twitch);
+                    snprintf(wake, 100, "Wake for twitch %f\r\n", twitch);
+                    pc.printf(wake);
+                    radio.send(GATEWAY_ID, (const void*)wake, 100, false);
 #endif
                     central_time.reset();
+                    central_time_trip = 0;
                 }
             } else {
+#if DEBUG
+                snprintf(wake, 100, "Wake for R %f\r\n", R);
+                pc.printf(wake);
+                radio.send(GATEWAY_ID, (const void*)wake, 100, false);
+#endif
                 central_time.reset();
+                central_time_trip = 0;
                 if (central) {
                     pc.printf("go %s\r\n", directions[direction]);
                     central = false;
