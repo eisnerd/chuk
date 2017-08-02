@@ -541,29 +541,7 @@ int main()
 #endif
 #ifdef TARGET_KL25Z
             indicators = 0;
-            if (R > 2) {
-                switch(direction) {
-                    // left
-                    case 0: //XR(); break;
-                    case 6: //XF(); break;
-                    case 7: //RF(); break;
-                    indicators = 2; break;
-                    // right
-                    case 2: //RX(); break;
-                    case 3: //FR(); break;
-                    case 4: //FX(); break;
-                    indicators = 1; break;
-                    // neither
-                    case 1: //RR(); break;
-                    case 5: //FF(); break;
-                    break;
-                }
-            }
-            if (R < 20) {
-                if (!central) {
-                    pc.printf("central\r\n");
-                    central = true;
-                }
+            if (R <= 0.1) {
                 double twitch = pow(n->aX - next->aX, 2.0) + pow(n->aY - next->aY, 2.0) + pow(n->aZ - next->aZ, 2.0);
 #if DEBUG > 1
                 pc.printf("twitch %f\r\n", twitch);
@@ -583,16 +561,39 @@ int main()
                     central_time_trip = 0;
                 }
             } else {
+                switch(direction) {
+                    // left
+                    case 0: //XR(); break;
+                    case 6: //XF(); break;
+                    case 7: //RF(); break;
+                    indicators = 2; break;
+                    // right
+                    case 2: //RX(); break;
+                    case 3: //FR(); break;
+                    case 4: //FX(); break;
+                    indicators = 1; break;
+                    // neither
+                    case 1: //RR(); break;
+                    case 5: //FF(); break;
+                    break;
+                }
 #if DEBUG
                 snprintf(wake, 100, "Wake for R %f\r\n", R);
                 pc.printf(wake);
                 radio.send(GATEWAY_ID, (const void*)wake, 100, false);
 #endif
-                central_time.reset();
-                central_time_trip = 0;
-                if (central) {
-                    pc.printf("go %s\r\n", directions[direction]);
-                    central = false;
+                if (R < 40) {
+                    if (!central) {
+                        pc.printf("central\r\n");
+                        central = true;
+                    }
+                } else {
+                    central_time.reset();
+                    central_time_trip = 0;
+                    if (central) {
+                        pc.printf("go %s\r\n", directions[direction]);
+                        central = false;
+                    }
                 }
                 R = R/20000;
                 float pal[8][3] = {
